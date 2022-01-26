@@ -39,7 +39,7 @@ def greet(name):
     <title>Greeting Page</title>
 </head>
 <body>
-    <h1>Hello, { name }</h1>
+    <h1>Hello, { name }!</h1>
     <h1>Welcome to my Greeting Page</h1>
 </body>
 </html>
