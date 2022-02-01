@@ -1,0 +1,47 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: |
+  This template will lunch an instance.
+Resources:
+  TurkerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0a8b4cd432b1c3063
+      InstanceType: t2.micro
+      KeyName: morgoliathkey
+      SecurityGroups:
+        - !Ref TurkerInstanceSG
+      UserData: !Base64 |
+        #!/bin/bash
+        yum update -y
+        yum install -y httpd
+        systemctl start httpd
+        systemctl enable httpd
+        yum install git -y
+        git clone https://github.com/Morgoliath/my-projects.git
+        cd my-projects/static-web
+        cp index.html /var/www/html/ && cp cat0.jpg /var/www/html/ && cp cat1.jpg /var/www/html/ && cp cat2.jpg /var/www/html/ && cp cat3.png /var/www/html/
+  TurkerInstanceSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: For the instance that allows ssh and http
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: MorgoliathCorp
+Outputs:
+  URL:
+    Description: Gives DNSname of project 101
+    Value: !Join
+      - ''
+      - - 'http://'
+        - !GetAtt 
+          - TurkerInstance
+          - PublicIp
