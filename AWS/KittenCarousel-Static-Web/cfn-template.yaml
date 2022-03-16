@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: |
+  Cloudformation Template for Morgo carousel static website deploy on s3 through cloudfront and route 53
+
+Parameters:
+  DomainName:
+    Description: DNS Name of existing Amazon Route 53 hosted zone. exp. clarusway.us
+    Type: AWS::Route53::HostedZone::Id
+  MorgoDomainName:
+    Description: Full domain name for the App. ex. Morgo.clarusway.us
+    Type: String
+    AllowedPattern: (?!-)[a-zA-Z0-9-.]{1,63}(?<!-)
+
+Resources:
+  MorgoBucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      AccessControl: PublicRead
+      BucketName: !Ref MorgoDomainName
+      WebsiteConfiguration:
+        IndexDocument: index.html
+  MorgoBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref MorgoBucket 
+      PolicyDocument: 
+        Statement: 
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Join ['', ['arn:aws:s3:::', !Ref 'MorgoBucket', /*]] # 
+  MorgoCertificate:
+    Type: "AWS::CertificateManager::Certificate"
+    Properties:
+      CertificateTransparencyLoggingPreference: ENABLED 
+
+      DomainName: !Ref MorgoDomainName 
+      DomainValidationOptions:
+        - DomainName: !Ref MorgoDomainName
+          HostedZoneId: !Ref DomainName
+      ValidationMethod: DNS
+  MorgoCloudfront:
+    Type: "AWS::CloudFront::Distribution" 
+    Properties:
+      DistributionConfig:
+        Aliases:
+        - !Ref MorgoDomainName 
+        Comment: Cloudfront Distribution pointing to Morgo S3 bucket
+        DefaultCacheBehavior:
+          AllowedMethods:  
+          - GET
+          - HEAD
+          Compress: true
+          ForwardedValues: 
+            QueryString: true 
+            Cookies:
+              Forward: none 
+          TargetOriginId: MorgoOrigin  
+          ViewerProtocolPolicy: allow-all 
+        DefaultRootObject: index.html
+        Enabled: true
+        HttpVersion: 'http2'
+        Origins: 
+        - DomainName: !Select [2, !Split ["/", !GetAtt MorgoBucket.WebsiteURL]] 
+          Id: MorgoOrigin
+          CustomOriginConfig: 
+            OriginProtocolPolicy: http-only 
+        PriceClass: PriceClass_All
+        ViewerCertificate:  
+          AcmCertificateArn: !Ref MorgoCertificate
+          SslSupportMethod: sni-only 
+  MorgoDNSName: 
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneId: !Ref DomainName 
+      RecordSets: 
+        - Name: !Ref MorgoDomainName
+          Type: A
+          AliasTarget:
+            HostedZoneId: Z2FDTNDATAQYW2 
+            DNSName: !GetAtt MorgoCloudfront.DomainName
+Outputs:
+  BucketName: 
+    Description: S3 Bucket URL for Morgo Website
+    Value: !GetAtt MorgoBucket.WebsiteURL
+  CloudfrontEndpoint:
+    Description: Endpoint for Morgo Cloudfront
+    Value: !GetAtt MorgoCloudfront.DomainName
+  FullDomainName:
+    Description: Full Domain Name of my Application
+    Value: !Ref MorgoDomainName

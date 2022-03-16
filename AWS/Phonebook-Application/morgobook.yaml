@@ -1,0 +1,170 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: |
+  CloudFormation Template for Phonebook Application. This template creates Application 
+  Load Balancer with Auto Scaling Group of Amazon Linux 2 (ami-048ff3da02834afdc) EC2 Instances 
+  which host Python Flask Web Application. EC2 instances are placed within 
+  WebServerSecurityGroup which allows http (80) connections only from ALBSecurityGroup, 
+  and allows tcp(3306) connections only within itself. RDS DB instance is placed within 
+  WebServerSecurityGroup so that Database Server can communicate with Web Servers. 
+  Application Load Balancer is placed within ALBSecurityGroup which allows http (80) 
+  connections from anywhere. WebServerASG Auto Scaling Group is using the WebServerLT 
+  Launch Template in order to spin up instances needed. WebServerLT Launch Template is 
+  configured to prepare Python Flask environment on EC2, and to deploy Phonebook 
+  Application on Flask Server after downloading the app code from Github repository.
+Parameters:
+  MorgoVPC:
+    Description: VPC Id of Your Existing Account
+    Type: AWS::EC2::VPC::Id
+
+  MorgoKeyName:
+    Description: Please Enter Your Valid Key-Pair
+    Type: AWS::EC2::KeyPair::KeyName
+
+  MorgoSubnets:
+    Description: Choose Your Subnets
+    Type: List<AWS::EC2::Subnet::Id>
+
+Resources:
+  MorgoALBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP for ALB
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref MorgoVPC
+
+  MorgoEC2SG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP for Flask Server and SSH for Getting Into EC2
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !GetAtt MorgoALBSG.GroupId
+      VpcId: !Ref MorgoVPC
+
+  MorgoLT:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: ami-048ff3da02834afdc
+        InstanceType: t2.micro
+        KeyName: !Ref MorgoKeyName
+        SecurityGroupIds:
+          - !GetAtt MorgoEC2SG.GroupId
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub Web Server of ${AWS::StackName} Stack
+        UserData: 
+          Fn::Base64:
+            !Sub 
+              - |
+                #! /bin/bash
+                yum update -y
+                yum install python3 -y
+                pip3 install flask
+                pip3 install flask_mysql
+                echo "${MyRDSURL}" > /home/ec2-user/dbserver.endpoint
+                TOKEN="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"
+                FOLDER="https://$TOKEN@raw.githubusercontent.com/Morgoliath/my_project_private/main/Project-004-Phonebook-Application/"
+                curl -s --create-dirs -o "/home/ec2-user/templates/index.html" -L "$FOLDER"templates/index.html
+                curl -s --create-dirs -o "/home/ec2-user/templates/add-update.html" -L "$FOLDER"templates/add-update.html
+                curl -s --create-dirs -o "/home/ec2-user/templates/delete.html" -L "$FOLDER"templates/delete.html
+                curl -s --create-dirs -o "/home/ec2-user/phonebook-app.py" -L "$FOLDER"phonebook-app.py
+                python3 /home/ec2-user/phonebook-app.py
+              - MyRDSURL: !GetAtt MorgoRDSS.Endpoint.Address
+  
+  MorgoEC2TG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      UnhealthyThresholdCount: 3
+      VpcId: !Ref MorgoVPC
+
+  MorgoALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      IpAddressType: ipv4
+      Scheme: internet-facing
+      SecurityGroups:
+        - !GetAtt MorgoALBSG.GroupId
+      Subnets: !Ref MorgoSubnets
+      Type: application
+
+  MorgoListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions: # Required
+        - TargetGroupArn: !Ref MorgoEC2TG
+          Type: forward
+      LoadBalancerArn: !Ref MorgoALB # Required
+      Port: 80
+      Protocol: HTTP
+
+  MorgoASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AvailabilityZones:
+        !GetAZs ""
+      DesiredCapacity: 2
+      HealthCheckGracePeriod: 300
+      HealthCheckType: ELB
+      LaunchTemplate:
+        LaunchTemplateId: !Ref MorgoLT
+        Version: !GetAtt MorgoLT.LatestVersionNumber
+      MaxSize: 3 # Required
+      MinSize: 1 # Required
+      TargetGroupARNs:
+        - !Ref MorgoEC2TG
+
+  MorgoRDSSSG:
+    Type: AWS::RDS::DBSecurityGroup
+    Properties:
+      DBSecurityGroupIngress:
+        - CIDRIP: 0.0.0.0/0
+        - EC2SecurityGroupId: !GetAtt MorgoEC2SG.GroupId
+      GroupDescription: Front-end access to RDS # Required
+
+  MorgoRDSS:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: 20
+      AllowMajorVersionUpgrade: false
+      AutoMinorVersionUpgrade: true
+      BackupRetentionPeriod: 0
+      DBClusterIdentifier: "String"
+      DBInstanceClass: db.t2.micro # Required
+      DBInstanceIdentifier: morgo-db
+      DBName: morgobook
+      DBSecurityGroups:
+        - !Ref MorgoRDSSSG
+      DeletionProtection: false
+      Engine: mysql
+      EngineVersion: 8.0.19
+      MasterUserPassword: morgoliathway.com
+      MasterUsername: admin
+      Port: 3306
+      PubliclyAccessible: false
+
+
+Outputs:
+  WebsiteURL:
+    Value: !Sub 
+      - http://${ALBAddress}
+      - ALBAddress: !GetAtt MorgoALB.DNSName
+    Description: Phonebook Application Load Balancer URL
+  
